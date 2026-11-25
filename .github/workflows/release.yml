@@ -116,10 +116,14 @@ jobs:
           echo "$certs" | grep -E "certificate (DN|SHA-256)" || echo "$certs"
 
       - uses: actions/upload-artifact@v5
+        # For releases the APK also goes onto the GitHub Release, so a full artifact quota
+        # (shared across the account) must not block publishing. Test builds still fail here.
+        continue-on-error: ${{ steps.version.outputs.tag != '' }}
         with:
           name: calendar-bridge-${{ steps.version.outputs.name }}
           path: dist/*.apk
           if-no-files-found: error
+          retention-days: 14
 
       - name: Publish GitHub Release
         if: steps.version.outputs.tag != ''
