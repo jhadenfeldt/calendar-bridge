@@ -1,0 +1,1 @@
+First release: subscribe to .ics calendar URLs and sync them into Android with correct timezones for Outlook feeds.

@@ -1,0 +1,17 @@
+*.iml
+.gradle/
+/local.properties
+.idea/
+.DS_Store
+build/
+/captures
+.externalNativeBuild
+.cxx
+.kotlin/
+.superpowers/
+# Real calendar feeds contain private data; only synthetic test fixtures are committed.
+*.ics
+!app/src/test/resources/*.ics
+!app/src/androidTest/assets/*.ics
+*.jks
+*.keystore

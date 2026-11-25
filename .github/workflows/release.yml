@@ -1,0 +1,137 @@
+# Builds Calendar Bridge for every version tag (v1.2.3) and publishes the signed APK as a GitHub Release.
+# Run it from the Actions tab: with a version it creates that tag and release; without one it's
+# a test build whose APK is attached to the run. See docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.2.3 (leave empty for a test build)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAS_SIGNING_KEY: ${{ secrets.CALBRIDGE_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Work out the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            tag="v${INPUT_VERSION#v}"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::Tag $tag already exists"
+              exit 1
+            fi
+          else
+            tag=""
+          fi
+          if [[ -n "$tag" ]]; then
+            name="${tag#v}"
+            if [[ ! "$name" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::$tag isn't a version like v1.2.3 or v1.2.3-beta.1"
+              exit 1
+            fi
+            major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+            if (( minor > 99 || patch > 99 )); then
+              echo "::error::Minor and patch must stay below 100 to map onto versionCode"
+              exit 1
+            fi
+            # 1.2.3 → 10203, so codes always increase with the version.
+            code=$(( major * 10000 + minor * 100 + patch ))
+            prerelease=$([[ -n "${BASH_REMATCH[4]}" ]] && echo true || echo false)
+          else
+            name="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}"
+            code=1
+            prerelease=true
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          if [[ -n "$tag" && "$HAS_SIGNING_KEY" != "true" ]]; then
+            echo "::error::Releases must be signed. Add the signing secrets (docs/RELEASING.md)."
+            exit 1
+          fi
+          echo "Building $name (versionCode $code)"
+
+      - name: Restore signing key
+        if: env.HAS_SIGNING_KEY == 'true'
+        run: echo "${{ secrets.CALBRIDGE_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/calendar-bridge.jks"
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Build APK
+        env:
+          CALBRIDGE_KEYSTORE: ${{ env.HAS_SIGNING_KEY == 'true' && format('{0}/calendar-bridge.jks', runner.temp) || '' }}
+          CALBRIDGE_KEYSTORE_PASSWORD: ${{ secrets.CALBRIDGE_KEYSTORE_PASSWORD }}
+          CALBRIDGE_KEY_ALIAS: ${{ secrets.CALBRIDGE_KEY_ALIAS }}
+          CALBRIDGE_KEY_PASSWORD: ${{ secrets.CALBRIDGE_KEY_PASSWORD }}
+        run: |
+          # An empty CALBRIDGE_KEYSTORE must not count as "set" for Gradle.
+          [[ -z "$CALBRIDGE_KEYSTORE" ]] && unset CALBRIDGE_KEYSTORE
+          tasks=$([[ "$HAS_SIGNING_KEY" == "true" ]] && echo ":app:assembleRelease" || echo ":app:assembleDebug")
+          ./gradlew $tasks \
+            -PversionName="${{ steps.version.outputs.name }}" \
+            -PversionCode="${{ steps.version.outputs.code }}" \
+            --stacktrace
+          mkdir -p dist
+          apk=$(find app/build/outputs/apk -name '*.apk' ! -name '*unsigned*' | head -n 1)
+          cp "$apk" "dist/calendar-bridge-${{ steps.version.outputs.name }}.apk"
+          ls -l dist
+
+      - name: Show signing certificate
+        if: env.HAS_SIGNING_KEY == 'true'
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
+          # Output format differs between build-tools versions, so match loosely.
+          certs=$("$apksigner" verify --print-certs dist/*.apk)
+          echo "$certs" | grep -E "certificate (DN|SHA-256)" || echo "$certs"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: calendar-bridge-${{ steps.version.outputs.name }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # Release notes come from the store changelog for this versionCode, when there is one.
+          changelog="fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.code }}.txt"
+          notes=$([[ -f "$changelog" ]] && cat "$changelog" || echo "Calendar Bridge ${{ steps.version.outputs.name }}")
+          flags=(--title "Calendar Bridge ${{ steps.version.outputs.name }}" --notes "$notes" --generate-notes)
+          [[ "${{ steps.version.outputs.prerelease }}" == "true" ]] && flags+=(--prerelease)
+          # For manual runs the tag doesn't exist yet; --target creates it at the built commit.
+          gh release create "$TAG" dist/*.apk --target "$GITHUB_SHA" "${flags[@]}"
+
