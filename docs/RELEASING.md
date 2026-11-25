@@ -1,6 +1,6 @@
 # Releasing
 
-Releases are built and published by GitHub Actions ([`release.yml`](../.github/workflows/release.yml)). The setup is copied from Ringer.
+Releases are built and published by GitHub Actions ([`release.yml`](../.github/workflows/release.yml)).
 
 ## Cutting a release
 
@@ -39,4 +39,4 @@ Keep the keystore backed up outside the repository. Every release must be signed
 
 ## Google Play
 
-Not set up: Calendar Bridge is installed from GitHub Releases. Ringer's workflow shows how to add an App Bundle and Play upload if that changes.
+Not set up: Calendar Bridge is installed from GitHub Releases.
