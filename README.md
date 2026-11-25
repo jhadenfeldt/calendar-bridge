@@ -10,5 +10,3 @@ Outlook writes Windows timezone names (`TZID=Pacific Standard Time`) that Androi
 - Mirrors the feed: events that disappear from the feed are removed
 
 Install the APK from [Releases](../../releases). See [docs/RELEASING.md](docs/RELEASING.md) for how releases are built.
-
-Design: [docs/superpowers/specs/2026-11-25-calendar-bridge-design.md](docs/superpowers/specs/2026-11-25-calendar-bridge-design.md)
